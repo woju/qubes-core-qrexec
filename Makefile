@@ -53,7 +53,6 @@ install-dom0: all-dom0
 		policy.include.List policy.include.Get policy.include.Replace policy.include.Remove; \
 	do ln -s /usr/bin/qubes-policy-admin $(DESTDIR)/etc/qubes-rpc/$$RPCNAME; \
 	done
-	ln -s /usr/bin/qrexec-policy-eval $(DESTDIR)/etc/qubes-rpc/policy.Eval
 
 	install -d $(DESTDIR)/etc/qubes-rpc/policy -m 775
 	install -d $(DESTDIR)/etc/qubes-rpc/policy/include -m 775

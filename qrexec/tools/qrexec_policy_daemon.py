@@ -99,6 +99,66 @@ async def handle_client_connection(log, policy_cache,
     finally:
         writer.close()
 
+async def handle_qrexec_connection(log, policy_cache,
+                                   reader, writer):
+
+    args = {}
+
+    try:
+        untrusted_data = await reader.read(65536)
+        if len(untrusted_data) > 65535:
+            log.error('Request length too long: %d', len(data))
+            return
+        try:
+            index_1 = untrusted_data.index(b'\0')
+            # This has already been validated by qrexec, so at least parts of
+            # it can be trusted.
+            qrexec_command_with_arg = untrusted_data[:index_1].decode('ascii', 'strict')
+            # This part is still untrusted
+            untrusted_data = untrusted_data[index_1 + 1:].decode('ascii', 'strict')
+            # qrexec guarantees this will work
+            qrexec_command_with_arg = qrexec_command_with_arg.split(' ')[0]
+            index_1 = qrexec_command_with_arg.index('+')
+            # The service used to invoke us
+            our_service_name = qrexec_command[:index_1]
+            # The service we are being queried for
+            qrexec_arg = qrexec_command_with_arg[index_1 + 1:]
+
+            if len(untrusted_data) > 63:
+                log.error('Request data too long: %d', len(untrusted_data))
+                return
+            split = untrusted_data.index('\0')
+            if split < 1 or split > 31:
+                log.error('Invalid data from qube')
+                return
+            untrusted_source = untrusted_data[:split]
+            untrusted_target = untrusted_data[split + 1:]
+
+            # these throw exceptions if the domain name is not valid
+            utils.sanitize_service_name(qrexec_arg, True)
+            utils.sanitize_domain_name(untrusted_source, True)
+            utils.sanitize_domain_name(untrusted_target, True)
+            source, intended_target = untrusted_source, untrusted_target
+        except (ValueError, UnicodeError):
+            log.error('Invalid data from qube')
+            return
+
+        result = await handle_request(
+                source=source,
+                intended_target=intended_target,
+                domain_id = -1,
+                process_ident = -1
+                assume_yes_for_ask=True,
+                just_evaluate=True,
+                log=log,
+                policy_cache=policy_cache)
+
+        writer.write(b"result=allow\n" if result == 0 else b"result=deny\n")
+        await writer.drain()
+
+    finally:
+        writer.close()
+
 
 async def start_serving(args=None):
     args = argparser.parse_args(args)
@@ -109,14 +169,18 @@ async def start_serving(args=None):
 
     policy_cache = PolicyCache(args.policy_path)
     policy_cache.initialize_watcher()
-
-    server = await asyncio.start_unix_server(
+    policy_server = await asyncio.create_unix_server(
         functools.partial(
             handle_client_connection, log, policy_cache),
         path=args.socket_path)
+
+    eval_server = await asyncio.create_unix_server(
+        functools.partial(
+            handle_qrexec_connection, log, policy_cache),
+        path='/etc/qubes-rpc/policy.Eval')
     os.chmod(args.socket_path, 0o660)
 
-    await server.serve_forever()
+    await asyncio.wait([server.wait_closed() for server in (policy_server, eval_server)])
 
 
 def main(args=None):
