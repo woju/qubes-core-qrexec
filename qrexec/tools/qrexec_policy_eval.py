@@ -26,32 +26,10 @@ This service allows qrexec policy to be evaluated outside of dom0.  One user of
 it is the GUI daemon, which needs to evaluate ``qubes.ClipboardPaste``.
 '''
 
-import logging
-import logging.handlers
-import pathlib
 import sys
-import os
-import asyncio
+import socket
 
-from .. import DEFAULT_POLICY, POLICYPATH
-from .. import exc
-from .. import utils
-from ..policy import parser
-from ..policy.utils import PolicyCache
-
-class JustEvaluateResult(Exception):
-    def __init__(self, exit_code):
-        super().__init__()
-        self.exit_code = exit_code
-
-class JustEvaluateAllowResolution(parser.AllowResolution):
-    async def execute(self, caller_ident):
-        raise JustEvaluateResult(0)
-
-class AssumeYesForAskResolution(parser.AskResolution):
-    async def execute(self, caller_ident):
-        return await self.handle_user_response(
-            True, self.request.target).execute(caller_ident)
+from .. import POLICYSOCKET
 
 def main(args=None):
     untrusted_arg = sys.stdin.buffer.read(64)
@@ -63,67 +41,31 @@ def main(args=None):
             return 2
         untrusted_source = untrusted_arg[:split]
         untrusted_target = untrusted_arg[split + 1:]
-        utls.sanitize_domain_name(untrusted_source, True)
-        utls.sanitize_domain_name(untrusted_target, True)
+        # these throw exceptions if the domain name is not valid
+        utils.sanitize_domain_name(untrusted_source, True)
+        utils.sanitize_domain_name(untrusted_target, True)
     except ValueError:
         return 2
     source, target = untrusted_source, untrusted_target
-
-    log = logging.getLogger('policy')
-    log.setLevel(logging.INFO)
-    if not log.handlers:
-        handler = logging.handlers.SysLogHandler(address='/dev/log')
-        log.addHandler(handler)
-
-    return asyncio.run(handle_request(
-        source,
-        target,
-        os.environ['QREXEC_SERVICE_ARGUMENT'],
-        log))
-
-
-# pylint: disable=too-many-arguments,too-many-locals
-async def handle_request(
-        source, intended_target, service_and_arg, log):
-    log_prefix = 'qrexec: {}: {} -> {}:'.format(
-        service_and_arg, source, intended_target)
-    try:
-        system_info = utils.get_system_info()
-    except exc.QubesMgmtException as err:
-        log.error('%s error getting system info: %s', log_prefix, err)
+    client_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client_socket.connect(POLICYSOCKET)
+    client_socket.sendall(b'''\
+source=%s
+intended_target=%s
+service_and_arg=%s
+assume_yes_for_ask=yes
+just_evaluate=yes
+domain_id=-1
+process_ident=-1
+''' % (source, target, os.environ['QREXEC_SERVICE_ARGUMENT'].decode('ascii', 'strict')))
+    client_socket.shutdown(socket.SHUT_WR)
+    return_data = client_socket.makefile('rb').read()
+    if return_data == b'result=allow\n':
+        return 0
+    elif return_data == b'result=deny\n':
         return 1
-    try:
-        i = service_and_arg.index('+')
-        service, argument = service_and_arg[:i], service_and_arg[i:]
-    except ValueError:
-        service, argument = service_and_arg, '+'
-
-    try:
-        policy = parser.FilePolicy(policy_path=POLICYPATH)
-
-        request = parser.Request(
-            service, argument, source, intended_target,
-            system_info=system_info,
-            ask_resolution_type=AssumeYesForAskResolution,
-            allow_resolution_type=JustEvaluateAllowResolution
-        resolution = policy.evaluate(request)
-        await resolution.execute(caller_ident)
-
-    except exc.PolicySyntaxError as err:
-        log.error('%s error loading policy: %s', log_prefix, err)
-        return 1
-    except exc.AccessDenied as err:
-        log.info('%s denied: %s', log_prefix, err)
-        return 1
-    except exc.ExecutionFailed as err:
-        # Return 1, so that the source receives MSG_SERVICE_REFUSED instead of
-        # hanging indefinitely.
-        log.error('%s error while executing: %s', log_prefix, err)
-        return 1
-    except JustEvaluateResult as err:
-        return err.exit_code
-    return 0
-
+    else:
+        raise AssertionError('Bad response from policy daemon')
 
 if __name__ == '__main__':
     sys.exit(main())
