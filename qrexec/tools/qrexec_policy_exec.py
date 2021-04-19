@@ -62,8 +62,8 @@ class AssumeYesForAskResolution(parser.AskResolution):
 
 class AgentAskResolution(parser.AskResolution):
     async def execute(self, caller_ident):
-        guivm = \
-            self.request.system_info['domains'][self.request.source]['guivm']
+        domains = self.request.system_info['domains']
+        guivm = domains[self.request.source]['guivm']
         if not guivm:
             log = logging.getLogger('policy')
             log.error('%s not allowed from %s: the resolution was "ask", '
@@ -73,15 +73,12 @@ class AgentAskResolution(parser.AskResolution):
             assert False, 'handle_user_response should throw'
 
         # prepare icons
-        icons = {name: self.request.system_info['domains'][name]['icon']
-            for name in self.request.system_info['domains'].keys()}
-        for dispvm_base in self.request.system_info['domains']:
-            if not (self.request.system_info['domains'][dispvm_base]
-                    ['template_for_dispvms']):
+        icons = {name: domains[name]['icon'] for name in domains.keys()}
+        for dispvm_base in domains:
+            if not (domains[dispvm_base]['template_for_dispvms']):
                 continue
             dispvm_api_name = '@dispvm:' + dispvm_base
-            icons[dispvm_api_name] = \
-                self.request.system_info['domains'][dispvm_base]['icon']
+            icons[dispvm_api_name] = domains[dispvm_base]['icon']
             icons[dispvm_api_name] = \
                 icons[dispvm_api_name].replace('app', 'disp')
 
