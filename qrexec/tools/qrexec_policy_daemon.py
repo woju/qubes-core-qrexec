@@ -110,42 +110,54 @@ async def handle_qrexec_connection(log, policy_cache,
             log.error('Request length too long: %d', len(data))
             return
         try:
-            index_1 = untrusted_data.index(b'\0')
+            # Qrexec guarantees that this will be present
+            service_descriptor_len = untrusted_data.index(b'\0')
             # This has already been validated by qrexec, so at least parts of
             # it can be trusted.
-            qrexec_command_with_arg = untrusted_data[:index_1].decode('ascii', 'strict')
-            # This part is still untrusted
-            untrusted_data = untrusted_data[index_1 + 1:].decode('ascii', 'strict')
-            # qrexec guarantees this will work
-            qrexec_command_with_arg = qrexec_command_with_arg.split(' ')[0]
-            index_1 = qrexec_command_with_arg.index('+')
-            # The service used to invoke us
-            our_service_name = qrexec_command[:index_1]
+            service_descriptor = untrusted_data[:service_descriptor_len]
+            qrexec_command_with_arg = service_descriptor[:service_descriptor.index(b' ')]
+            qrexec_command_len = qrexec_command_with_arg.find(b'+')
+            if qrexec_command_len <= 0:
+                if qrexec_command_len:
+                    log.warning('No service specified in policy query')
+                else:
+                    log.error('Invoked via an empty service name?')
+                return
             # The service we are being queried for
-            qrexec_arg = qrexec_command_with_arg[index_1 + 1:]
+            service_queried = qrexec_command_with_arg[qrexec_command_len + 1:]
+            if not service_queried:
+                log.warning('Empty string is not a valid service')
+
+            ### SANITIZE BEGIN
+            untrusted_data = untrusted_data[service_descriptor_len + 1:]
 
             if len(untrusted_data) > 63:
-                log.error('Request data too long: %d', len(untrusted_data))
+                log.warning('Request data too long: %d', len(untrusted_data))
                 return
-            split = untrusted_data.index('\0')
-            if split < 1 or split > 31:
-                log.error('Invalid data from qube')
+            split = untrusted_data.find(b'\0')
+            if not (1 <= split <= 31):
+                log.warning('Invalid data from qube')
                 return
-            untrusted_source = untrusted_data[:split]
-            untrusted_target = untrusted_data[split + 1:]
+            untrusted_source = untrusted_data[:split].decode('ascii', 'strict')
+            untrusted_target = untrusted_data[split + 1:].decode('ascii', 'strict')
+            if not (1 <= len(untrusted_target) <= 31):
+                log.warning('Invalid data from qube')
+                return
 
             # these throw exceptions if the domain name is not valid
             utils.sanitize_service_name(qrexec_arg, True)
             utils.sanitize_domain_name(untrusted_source, True)
             utils.sanitize_domain_name(untrusted_target, True)
+            ### SANITIZE END
             source, intended_target = untrusted_source, untrusted_target
         except (ValueError, UnicodeError):
-            log.error('Invalid data from qube')
+            log.warning('Invalid data from qube')
             return
 
         result = await handle_request(
                 source=source,
                 intended_target=intended_target,
+                service_and_arg=service_queried.decode('ascii', 'strict'),
                 domain_id = -1,
                 process_ident = -1
                 assume_yes_for_ask=True,
