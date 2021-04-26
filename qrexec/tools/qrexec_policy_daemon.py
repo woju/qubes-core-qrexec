@@ -115,6 +115,9 @@ async def handle_qrexec_connection(log, policy_cache,
             qrexec_command_with_arg = service_descriptor.split(b' ', 1)[0]
             invoked_service, service_queried = qrexec_command_with_arg.split(b'+', 1)
 
+            if invoked_service != b'policy.EvalSimple':
+                log.warning('policy.EvalSimple invoked with the wrong name')
+                return
 
             ### SANITIZE BEGIN
             if not service_queried:
