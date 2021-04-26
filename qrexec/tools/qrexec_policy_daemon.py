@@ -176,7 +176,7 @@ async def start_serving(args=None):
     eval_server = await asyncio.create_unix_server(
         functools.partial(
             handle_qrexec_connection, log, policy_cache),
-        path='/etc/qubes-rpc/policy.Eval')
+        path='/etc/qubes-rpc/policy.EvalSimple')
     os.chmod(args.socket_path, 0o660)
 
     await asyncio.wait([server.wait_closed() for server in (policy_server, eval_server)])
