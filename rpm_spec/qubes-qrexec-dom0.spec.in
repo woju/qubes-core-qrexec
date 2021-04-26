@@ -114,6 +114,7 @@ rm -f %{name}-%{version}
 %{_sysconfdir}/qubes-rpc/policy.include.Get
 %{_sysconfdir}/qubes-rpc/policy.include.Replace
 %{_sysconfdir}/qubes-rpc/policy.include.Remove
+%{_sysconfdir}/qubes-rpc/policy.Eval
 
 /lib/systemd/system/qubes-qrexec-policy-daemon.service
 
